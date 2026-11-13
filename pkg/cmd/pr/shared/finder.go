@@ -597,6 +597,14 @@ func preloadPrChecks(client *http.Client, repo ghrepo.Interface, pr *api.PullReq
 			return err
 		}
 
+		// The pull request can disappear, or lose its check rollup, between the
+		// first query and this paginated one. There is nothing left to page
+		// through in that case, so report that the checks are incomplete instead
+		// of indexing into a missing node.
+		if resp.Node == nil || len(resp.Node.StatusCheckRollup.Nodes) == 0 {
+			return errors.New("could not read the pull request's status checks")
+		}
+
 		result := resp.Node.StatusCheckRollup.Nodes[0].Commit.StatusCheckRollup.Contexts
 		statusCheckRollup.Nodes = append(
 			statusCheckRollup.Nodes,
