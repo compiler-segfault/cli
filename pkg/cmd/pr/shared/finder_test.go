@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/cli/cli/v2/api"
 	ghContext "github.com/cli/cli/v2/context"
 	"github.com/cli/cli/v2/git"
 	"github.com/cli/cli/v2/internal/ghrepo"
@@ -1007,4 +1008,47 @@ func (s *stubProgressIndicator) StartProgressIndicator() {
 
 func (s *stubProgressIndicator) StopProgressIndicator() {
 	s.stopCalled = true
+}
+
+func Test_preloadPrChecks_incompleteResponse(t *testing.T) {
+	tests := []struct {
+		name     string
+		response string
+	}{
+		{
+			name:     "pull request no longer resolves",
+			response: `{"data":{"node":null}}`,
+		},
+		{
+			name:     "pull request has no check rollup",
+			response: `{"data":{"node":{"statusCheckRollup":{"nodes":[]}}}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := &httpmock.Registry{}
+			defer reg.Verify(t)
+			reg.Register(
+				httpmock.GraphQL(`query PullRequestStatusChecks\b`),
+				httpmock.StringResponse(tt.response),
+			)
+
+			contexts := api.CheckContexts{}
+			contexts.PageInfo.HasNextPage = true
+			contexts.PageInfo.EndCursor = "cursor1"
+			pr := &api.PullRequest{ID: "PR_1"}
+			pr.StatusCheckRollup.Nodes = []api.StatusCheckRollupNode{
+				{Commit: api.StatusCheckRollupCommit{
+					StatusCheckRollup: api.CommitStatusCheckRollup{Contexts: contexts},
+				}},
+			}
+
+			repo, err := ghrepo.FromFullName("OWNER/REPO")
+			require.NoError(t, err)
+
+			err = preloadPrChecks(&http.Client{Transport: reg}, repo, pr)
+			require.ErrorContains(t, err, "could not read the pull request's status checks")
+		})
+	}
 }
